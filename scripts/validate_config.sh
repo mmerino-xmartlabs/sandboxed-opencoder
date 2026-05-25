@@ -20,6 +20,9 @@ required_vars=(
   TEMP_PATH
   LLM_SOURCE
   OPENCODE_PORT
+  APP_PORT
+  GIT_USERNAME
+  GIT_EMAIL
   PYTHON_BASE_IMAGE
   UV_IMAGE
   NODE_VERSION
@@ -41,6 +44,27 @@ for id_var in HOST_UID HOST_GID; do
     exit 1
   fi
 done
+
+validate_port_value() {
+  local port_name="$1"
+  local port_value="$2"
+
+  if ! [[ "$port_value" =~ ^[0-9]+$ ]] || [ "$port_value" -lt 1024 ] || [ "$port_value" -gt 65535 ]; then
+    echo "Error: ${port_name} must be an integer from 1024 to 65535."
+    exit 1
+  fi
+
+  if [ -f config/port-allowlist.txt ] && ! grep -Fxq "$port_value" config/port-allowlist.txt; then
+    echo "Error: ${port_name}=${port_value} is not in config/port-allowlist.txt."
+    exit 1
+  fi
+}
+
+validate_port_value OPENCODE_PORT "$OPENCODE_PORT"
+validate_port_value APP_PORT "$APP_PORT"
+if [ -n "${LLM_PORT:-}" ]; then
+  validate_port_value LLM_PORT "$LLM_PORT"
+fi
 
 case "$LLM_SOURCE" in
   lm_studio)
@@ -85,6 +109,19 @@ if [ -f config/apt-package-allowlist.txt ]; then
   package_entries="$(grep -Ev '^(#.*|$)' config/apt-package-allowlist.txt)"
   if [ "$package_entries" != "$(printf '%s\n' "$package_entries" | sort -u)" ]; then
     echo "Error: config/apt-package-allowlist.txt must be sorted and deduplicated."
+    exit 1
+  fi
+fi
+
+if [ -f config/port-allowlist.txt ]; then
+  if grep -Ev '^(#.*|$|[0-9]+)$' config/port-allowlist.txt >/dev/null; then
+    echo "Error: config/port-allowlist.txt contains invalid port entries."
+    exit 1
+  fi
+
+  port_entries="$(grep -Ev '^(#.*|$)' config/port-allowlist.txt)"
+  if [ "$port_entries" != "$(printf '%s\n' "$port_entries" | sort -n -u)" ]; then
+    echo "Error: config/port-allowlist.txt must be numerically sorted and deduplicated."
     exit 1
   fi
 fi

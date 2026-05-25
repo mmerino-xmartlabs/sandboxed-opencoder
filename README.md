@@ -19,6 +19,16 @@ The container is designed around these boundaries:
 
 This is a defense-in-depth sandbox, not a VM-grade security boundary. For stronger host isolation, run Docker rootless or inside a dedicated VM.
 
+## Shielded Image Strengths
+
+- **Host containment:** the agent sees one writable project mount, one read-only shared mount, and one disposable temp mount.
+- **Non-root default:** OpenCode and generated project commands run as `agent`, not root.
+- **Pinned supply chain:** Python, uv, Node.js, OpenCode, GitHub CLI, and Ollama defaults are version-pinned.
+- **Constrained escalation:** runtime elevation is limited to root-owned wrappers for allowlisted apt packages and explicit port cleanup.
+- **Small network surface:** Docker publishes only allowlisted ports, and each published port is bound to `127.0.0.1`.
+- **Secret hygiene:** GitHub tokens are optional runtime environment values, generated projects get local `.env` files, and checks include a lightweight committed-secret scan.
+- **Operational audit trail:** project and sandbox log directories are present, and each development cycle is documented in `docs/`.
+
 ## Prerequisites
 
 - Docker and Docker Compose
@@ -63,6 +73,18 @@ List runtime-installable apt packages:
 make allowlist
 ```
 
+List exposed-port allowlist:
+
+```bash
+make ports
+```
+
+Run local security/config checks:
+
+```bash
+make check
+```
+
 ## Run
 
 Start the sandbox:
@@ -95,6 +117,7 @@ Each generated project receives:
 
 ```bash
 make build        # build the workspace image with pinned versions
+make check        # run config, shell, compose, and secret-pattern checks
 make logs         # follow container logs
 make stop         # stop containers
 make clean-cache  # remove temp/cache files
@@ -103,6 +126,14 @@ make nuke-all
 ```
 
 `delete-project` and `nuke-all` remove project data. Review `PROJECT_NAME` and `PROJECTS_ROOT_PATH` before running them.
+
+## Repository Standards
+
+- Read `CONTRIBUTING.md` before changing security-sensitive files.
+- Read `SECURITY.md` before changing sandbox boundaries, tokens, ports, or install policy.
+- Architecture and operational checks are summarized in `docs/architecture.md`.
+- Run `make check` before every commit.
+- Update `docs/development_cycle_X.md` when behavior, policy, docs, or operator workflow changes.
 
 ## Build-Time Controls
 
@@ -129,6 +160,20 @@ sudo agent-apt-install ffmpeg libgl1
 ```
 
 If a package is not allowlisted, update `config/apt-package-allowlist.txt` and the Dockerfile after user review, then rebuild. Do not grant broad `apt-get` sudo access.
+
+## Port Policy
+
+The workspace exposes only ports listed in `config/port-allowlist.txt`, and Compose binds them to `127.0.0.1` so they are reachable from the host only. Defaults are:
+
+- `OPENCODE_PORT=3000` for the OpenCode web UI.
+- `APP_PORT=7860` for one agent-built local app.
+- `LLM_PORT=1234` for LM Studio, or `11434` for the optional Ollama profile.
+
+All other host ports should remain unmapped. If a project needs another port, add it to `config/port-allowlist.txt` after review, run `make validate`, and rebuild/restart.
+
+## Logs
+
+Generated projects include a `logs/` directory for application logs. The root `logs/` directory is reserved for sandbox operation logs, and `make logs` follows Docker service logs. Do not paste secrets into reports or logs; `make check` includes a lightweight committed-secret pattern scan.
 
 ## Skills
 

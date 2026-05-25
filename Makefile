@@ -3,13 +3,16 @@ ifneq (,$(wildcard ./.env))
     export
 endif
 
-.PHONY: setup validate versions allowlist build run stop clean-cache logs nuke-all delete-project
+.PHONY: setup validate check versions allowlist ports build run stop clean-cache logs nuke-all delete-project
 
 setup:
-	mkdir -p $(PROJECTS_ROOT_PATH) $(SHARED_SYSTEM_PATH) $(TEMP_PATH)
+	mkdir -p $(PROJECTS_ROOT_PATH) $(SHARED_SYSTEM_PATH) $(TEMP_PATH) logs
 
 validate:
 	@./scripts/validate_config.sh
+
+check:
+	@./scripts/security_check.sh
 
 versions:
 	@echo "Python base: $${PYTHON_BASE_IMAGE:-python:3.13.13-slim-bookworm}"
@@ -21,6 +24,9 @@ versions:
 
 allowlist:
 	@grep -Ev '^(#|$$)' config/apt-package-allowlist.txt
+
+ports:
+	@grep -Ev '^(#|$$)' config/port-allowlist.txt
 
 build: validate
 	ACTIVE_PROJECT=$(PROJECT_NAME) docker compose build workspace

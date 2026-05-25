@@ -1,14 +1,16 @@
 #!/bin/bash
 set -Eeuo pipefail
 
+CONFIG_FILE="${CONFIG_FILE:-.env}"
+
 # Load environment variables
-if [ -f .env ]; then
+if [ -f "$CONFIG_FILE" ]; then
   set -a
   # shellcheck disable=SC1091
-  . ./.env
+  . "$CONFIG_FILE"
   set +a
 else
-  echo "Error: .env not found. Copy .env.example to .env and configure it first."
+  echo "Error: ${CONFIG_FILE} not found. Copy .env.example to .env and configure it first."
   exit 1
 fi
 
@@ -51,7 +53,7 @@ cat <<EOF > "$PROJECT_DIR/.env"
 # Dynamic Configuration injected by xl-sandboxed-opencoder
 LLM_BASE_URL="${INJECT_URL}"
 LLM_MODEL_NAME="${INJECT_MODEL}"
-APP_PORT=7860
+APP_PORT="${APP_PORT:-7860}"
 EOF
 # ------------------------------------------
 
@@ -88,6 +90,8 @@ if [ ! -d "$PROJECT_DIR/.git" ]; then
 
   cd "$PROJECT_DIR"
   git init
+  git config user.name "${GIT_USERNAME:-Agent Coder}"
+  git config user.email "${GIT_EMAIL:-agent@sandboxed.local}"
   git add .
   git commit -m "chore: initialize project with strict agent templates"
   echo "Project '$PROJECT_NAME' created securely."
