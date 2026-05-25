@@ -3,12 +3,29 @@ ifneq (,$(wildcard ./.env))
     export
 endif
 
-.PHONY: setup run stop clean-cache logs nuke-all delete-project
+.PHONY: setup validate versions allowlist build run stop clean-cache logs nuke-all delete-project
 
 setup:
 	mkdir -p $(PROJECTS_ROOT_PATH) $(SHARED_SYSTEM_PATH) $(TEMP_PATH)
 
-run: setup
+validate:
+	@./scripts/validate_config.sh
+
+versions:
+	@echo "Python base: $${PYTHON_BASE_IMAGE:-python:3.13.13-slim-bookworm}"
+	@echo "uv image: $${UV_IMAGE:-ghcr.io/astral-sh/uv:0.11.16}"
+	@echo "Node package: $${NODE_VERSION:-22.22.2-1nodesource1}"
+	@echo "OpenCode: $${OPENCODE_VERSION:-0.6.6}"
+	@echo "GitHub CLI: $${GH_VERSION:-2.92.0}"
+	@echo "Ollama image tag: $${OLLAMA_IMAGE_TAG:-0.23.1}"
+
+allowlist:
+	@grep -Ev '^(#|$$)' config/apt-package-allowlist.txt
+
+build: validate
+	ACTIVE_PROJECT=$(PROJECT_NAME) docker compose build workspace
+
+run: validate setup
 	@if [ -z "$(PROJECT_NAME)" ]; then echo "Error: PROJECT_NAME is not set in .env."; exit 1; fi
 	@./new_project.sh
 	@if [ "$(LLM_SOURCE)" = "ollama_docker" ]; then \

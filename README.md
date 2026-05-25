@@ -1,49 +1,135 @@
 # xl-sandboxed-opencoder
 
-A highly secure, containerized, and locally-hosted environment designed to replicate the OpenAI Codex desktop app experience using open-source tools. This project wraps **OpenCode** and **Qwen3 4B Thinking** inside a hardened Docker sandbox, strictly enforcing industry-standard software engineering practices for Python development.
+`xl-sandboxed-opencoder` runs OpenCode inside a constrained Docker workspace and routes it to a local OpenAI-compatible model server, typically LM Studio on the host. The goal is a local, private coding agent with a smaller blast radius than installing agent tooling directly on the host.
 
-## 🏗️ Architecture & File System
+## Security Model
 
-The sandbox strictly routes data into three distinct, host-mounted volumes defined in your `.env` file to prevent overlap and ensure easy clean-up:
-* **`PROJECTS_ROOT_PATH`:** The active workspace where all git repositories and code reside.
-* **`SHARED_SYSTEM_PATH`:** A read-only mount for injecting necessary host credentials (e.g., AWS configs, SSH keys) securely without the agent roaming your host OS.
-* **`TEMP_PATH`:** The absolute garbage chute. All `uv` environments, `ruff` caches, `mypy` caches, and `pip` temporal files go here. If it gets too large, delete it on the host—it will rebuild harmlessly.
+The container is designed around these boundaries:
 
-## 🔄 Agentic Development Cycles
+- OpenCode runs as a non-root `agent` user whose UID/GID match the host user.
+- Configuration validation rejects UID/GID `0` so the workspace service is not launched as root.
+- Only one project directory is mounted read/write at `/home/agent/projects`.
+- Optional shared host material is mounted read-only at `/home/agent/shared`.
+- Caches and temporary files are isolated under `/home/agent/temp`.
+- Compose drops Linux capabilities and re-adds only a narrow set needed by the sudo wrappers, binds exposed ports to `127.0.0.1`, and applies CPU, memory, and process limits. `no-new-privileges` is intentionally not enabled on the workspace service because it would disable the constrained sudo wrappers used for allowlisted package installs.
+- OpenCode is installed at image build time from a pinned npm package version instead of at container startup.
+- GitHub CLI is installed from a pinned GitHub release asset with SHA-256 verification.
+- The agent cannot use broad `sudo apt-get install` or arbitrary privileged process controls; it can only run `sudo agent-apt-install` for packages in `config/apt-package-allowlist.txt` and `sudo agent-kill-port` for non-privileged TCP ports.
+- The entrypoint generates OpenCode provider config from environment variables with `jq` so model names and URLs are not hardcoded into project code.
 
-Agents in this environment are instructed to **never** write code blindly. They operate via strict "Software Development Cycles." Every task must follow this sequence:
+This is a defense-in-depth sandbox, not a VM-grade security boundary. For stronger host isolation, run Docker rootless or inside a dedicated VM.
 
-1. **Context & Damage Control:** Read `AGENTS.md`, the `README.md`, and the most recent report in the `docs/` folder. Verify that the previous cycle's goals were actually implemented. If not, perform damage control.
-2. **Plan:** Scope the feature incrementally.
-3. **Execute:** Write fully type-hinted, PEP8-compliant code.
-4. **Test Exhaustively:** Write/update tests using `pytest` and execute static checks (`ruff`, `mypy`). Diagnose and repeat until green.
-5. **Git Ops:** Commit logically, merge to main.
-6. **Update Docs:** Generate a new `docs/development_cycle_X.md` report summarizing what was accomplished, any technical debt introduced, and the planned next steps.
+## Prerequisites
 
-## 🚀 Getting Started
+- Docker and Docker Compose
+- LM Studio serving an OpenAI-compatible API on the host, or the optional Ollama Compose profile
+- A configured `.env` file based on `.env.example`
 
-### Prerequisites
-* Docker & Docker Compose
-* (Optional) LM Studio installed on your host OS.
+## Configuration
 
-### Installation & Initialization
-1. Clone this repository and configure your `.env` file. Pay special attention to `USE_LOCAL_LM_STUDIO`.
-2. Initialize the environment:
-   ```bash
-   make run
-   ```
-3. Create a new project:
-   ```bash
-   ./new_project.sh agentic-yt-inspector
-   ```
-4. Access the OpenCode Web UI at `http://localhost:8443` and prompt your agent.
+Create a local environment file:
 
-## 🛠️ Useful Make Commands
+```bash
+cp .env.example .env
+```
 
-This environment comes with a host `Makefile` to easily manage the sandbox without memorizing Docker commands:
+Required fields:
 
-* `make run`: Starts the sandbox (and the headless LLM container if `USE_LOCAL_LM_STUDIO=false`).
-* `make stop`: Halts all sandboxed containers.
-* `make clean-cache`: Safely deletes gigabytes of temporal files, uv environments, and garbage in your `TEMP_PATH`. The agent will rebuild them on the next run.
-* `make nuke-all`: Destroys the containers and cleans the cache completely.
+- `PROJECT_NAME`: simple directory name for the active project.
+- `PROJECTS_ROOT_PATH`: absolute host directory where coding projects live.
+- `SHARED_SYSTEM_PATH`: absolute host directory mounted read-only into the container.
+- `TEMP_PATH`: absolute host directory for caches and disposable state.
+- `LLM_SOURCE`: one of `lm_studio`, `fastflow_amd`, or `ollama_docker`.
+- `LM_STUDIO_MODEL`, `FASTFLOW_MODEL`, or `OLLAMA_MODEL`: set the one matching `LLM_SOURCE`.
+- `OPENCODE_PORT`: local host port for OpenCode web.
+- `GIT_USERNAME` and `GIT_EMAIL`: Git identity configured inside the container.
+- `GITHUB_TOKEN` or `GH_TOKEN`: optional GitHub token for `gh` and HTTPS GitHub operations. Use fine-grained, least-privilege tokens.
 
+Validate configuration before launching:
+
+```bash
+make validate
+```
+
+Print pinned tool versions:
+
+```bash
+make versions
+```
+
+List runtime-installable apt packages:
+
+```bash
+make allowlist
+```
+
+## Run
+
+Start the sandbox:
+
+```bash
+make run
+```
+
+Open the web UI:
+
+```text
+http://localhost:${OPENCODE_PORT}
+```
+
+The launch flow creates or updates the active project under:
+
+```text
+${PROJECTS_ROOT_PATH}/${PROJECT_NAME}
+```
+
+Each generated project receives:
+
+- `AGENTS.md`
+- `.env` with `LLM_BASE_URL`, `LLM_MODEL_NAME`, and `APP_PORT`
+- `Makefile`
+- `src/<package_name>/`
+- `docs/`, `artifacts/`, `logs/`, and `skills/`
+
+## Operations
+
+```bash
+make build        # build the workspace image with pinned versions
+make logs         # follow container logs
+make stop         # stop containers
+make clean-cache  # remove temp/cache files
+make delete-project
+make nuke-all
+```
+
+`delete-project` and `nuke-all` remove project data. Review `PROJECT_NAME` and `PROJECTS_ROOT_PATH` before running them.
+
+## Build-Time Controls
+
+The Dockerfile exposes build args:
+
+- `NODE_MAJOR`, default `22`
+- `NODE_VERSION`, default `22.22.2-1nodesource1`
+- `OPENCODE_VERSION`, default `0.6.6`
+- `GH_VERSION`, default `2.92.0`
+- `UV_IMAGE`, default `ghcr.io/astral-sh/uv:0.11.16`
+- `PYTHON_BASE_IMAGE`, default `python:3.13.13-slim-bookworm`
+- `HOST_UID`, `HOST_GID`
+
+To update OpenCode, bump `OPENCODE_VERSION`, rebuild, and review the resulting image behavior before using it on important repositories.
+
+## System Package Policy
+
+The image preinstalls common software development tools for Python, backend, data, and AI workflows, including `curl`, `wget`, `git`, `gh`, `uv`, `cmake`, `make`, `ripgrep`, `jq`, `tree`, `vim`, `nano`, `tmux`, `htop`, `shellcheck`, `sqlite3`, `ffmpeg`, `rsync`, `openssh-client`, and common native libraries used by Python packages.
+
+At runtime, the agent may install only exact package names listed in `config/apt-package-allowlist.txt`:
+
+```bash
+sudo agent-apt-install ffmpeg libgl1
+```
+
+If a package is not allowlisted, update `config/apt-package-allowlist.txt` and the Dockerfile after user review, then rebuild. Do not grant broad `apt-get` sudo access.
+
+## Skills
+
+Place Markdown files in `skills/` to provide reusable task-specific guidance. During project initialization, the root `skills/` directory is copied into the generated project, and `AGENTS.md` instructs the agent to read relevant skill files at the start of a development cycle.
