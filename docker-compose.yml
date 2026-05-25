@@ -1,0 +1,52 @@
+services:
+  workspace:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        - HOST_UID=${HOST_UID:-501}
+        - HOST_GID=${HOST_GID:-20}
+    container_name: opencode-workspace
+    hostname: sandbox
+    user: "${HOST_UID}:${HOST_GID}"
+    ports:
+      - "127.0.0.1:${OPENCODE_PORT}:${OPENCODE_PORT}"
+      # Expose the pre-allocated port for Agent-built web apps (Gradio/FastAPI)
+      - "127.0.0.1:${APP_PORT:-7860}:7860"
+    volumes:
+      - ${PROJECTS_ROOT_PATH}/${ACTIVE_PROJECT:-default_project}:/home/agent/projects
+      - ${SHARED_SYSTEM_PATH}:/home/agent/shared:ro
+      - ${TEMP_PATH}:/home/agent/temp
+    env_file:
+      - .env
+    environment:
+      - HOME=/home/agent
+      - XDG_CACHE_HOME=/home/agent/temp/cache
+      - UV_CACHE_DIR=/home/agent/temp/uv_cache
+      - RUFF_CACHE_DIR=/home/agent/temp/ruff_cache
+      - MYPY_CACHE_DIR=/home/agent/temp/mypy_cache
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - agent_network
+    restart: unless-stopped
+
+  llm-backend:
+    image: ollama/ollama:latest
+    container_name: opencode-llm
+    profiles:
+      - local-llm
+    ports:
+      - "127.0.0.1:${LLM_PORT:-11434}:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - agent_network
+    restart: unless-stopped
+
+networks:
+  agent_network:
+    driver: bridge
+
+volumes:
+  ollama_data:
